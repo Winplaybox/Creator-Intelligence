@@ -22,6 +22,7 @@ from app.revenue_routes import router as revenue_router
 from app.billing_routes import router as billing_router
 from app.notification_routes import router as notification_router
 from app.rbac_routes import router as rbac_router
+from app.social_oauth_routes import router as social_oauth_router
 app=FastAPI(title=settings.app_name,version="0.5.0",docs_url="/docs" if settings.app_env!="production" else None,redoc_url=None)
 app.add_middleware(CORSMiddleware,allow_origins=settings.allowed_origins,allow_credentials=True,allow_methods=["GET","POST","PUT","PATCH","DELETE"],allow_headers=["Authorization","Content-Type","X-Request-ID"])
 app.include_router(auth_router)
@@ -41,6 +42,7 @@ app.include_router(revenue_router)
 app.include_router(billing_router)
 app.include_router(notification_router)
 app.include_router(rbac_router)
+app.include_router(social_oauth_router)
 @app.get("/health",tags=["health"])
 async def health(): return {"status":"ok","service":"api","version":"0.5.0"}
 @app.get("/ready",tags=["health"])
