@@ -6,7 +6,7 @@ class Settings(BaseSettings):
  jwt_secret:str="dev-only-change-me-to-a-32-byte-random-secret";jwt_issuer:str="creator-intelligence";jwt_access_minutes:int=15;jwt_refresh_days:int=30;cookie_secure:bool=False
  google_client_id:str="";google_client_secret:str="";google_youtube_redirect_uri:str="";youtube_token_encryption_key:str="";youtube_daily_quota_limit:int=10000;youtube_api_key:str=""
  meta_client_id:str="";meta_client_secret:str="";meta_oauth_redirect_uri:str="";meta_graph_version:str="v23.0";social_token_encryption_key:str=""
- ai_api_key:str="";ai_base_url:str="";ai_model:str="";admin_emails:str="";publishing_worker_enabled:bool=False;publishing_worker_poll_seconds:int=3
+ ai_api_key:str="";ai_base_url:str="";ai_model:str="";admin_emails:str="";publishing_worker_enabled:bool=False;publishing_worker_poll_seconds:int=3;youtube_publishing_worker_enabled:bool=False;youtube_upload_root:str=''
  @property
  def allowed_origins(self):return [x.strip() for x in self.cors_origins.split(",") if x.strip()]
 settings=Settings()
