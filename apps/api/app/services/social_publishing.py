@@ -1,21 +1,24 @@
 """Provider publishing adapters for Facebook Pages and Instagram Business.
 
-Called by a publishing worker (Wave 26). Credentials are supplied by the caller;
-this module does not persist tokens or queue records.
+Called by a publishing worker. Credentials are supplied by the caller; this module
+does not persist tokens or queue records.
 """
 from __future__ import annotations
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 import httpx
-import asyncio
+
 
 class PublishingError(RuntimeError):
     """Provider rejected a publish request or returned an invalid response."""
+
 
 @dataclass(frozen=True)
 class PublishResult:
     platform: str
     provider_post_id: str
+
 
 class MetaPublisher:
     def __init__(self, graph_version: str = "v23.0", timeout: float = 30.0):
@@ -39,30 +42,30 @@ class MetaPublisher:
     async def _get(self, endpoint: str, token: str) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(f\"{self.base_url}/{endpoint}\", params={\"access_token\": token})
+                response = await client.get(f"{self.base_url}/{endpoint}", params={"access_token": token})
                 response.raise_for_status()
                 result = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            raise PublishingError(\"Meta media status request failed\") from exc
+            raise PublishingError("Meta media status request failed") from exc
         if not isinstance(result, dict):
-            raise PublishingError(\"Meta returned an invalid media status\")
+            raise PublishingError("Meta returned an invalid media status")
         return result
 
-
-    async def _wait_for_video_container(self, container_id: str, token: str, *,
-                                       poll_interval: float = 3.0, timeout: float = 90.0) -> None:
-        \"\"\"Wait until a Reels container is ready; fail on provider error or timeout.\"\"\"
+    async def _wait_for_video_container(
+        self, container_id: str, token: str, *, poll_interval: float = 3.0, timeout: float = 90.0
+    ) -> None:
+        """Wait for Instagram Reels processing; fail on error or bounded timeout."""
         elapsed = 0.0
         while elapsed <= timeout:
-            status = await self._get(f\"{container_id}?fields=status_code,status\", token)
-            code = str(status.get(\"status_code\", \"\")).upper()
-            if code == \"FINISHED\":
+            status = await self._get(f"{container_id}?fields=status_code,status", token)
+            code = str(status.get("status_code", "")).upper()
+            if code == "FINISHED":
                 return
-            if code in {\"ERROR\", \"EXPIRED\\"}:
-                raise PublishingError(\"Instagram media processing failed\")
+            if code in {"ERROR", "EXPIRED"}:
+                raise PublishingError("Instagram media processing failed")
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
-        raise PublishingError(\"Instagram media processing timed out\")
+        raise PublishingError("Instagram media processing timed out")
 
     async def publish_facebook_page(self, page_id: str, page_token: str, *,
                                    message: str, link: str | None = None) -> PublishResult:
@@ -101,6 +104,7 @@ class MetaPublisher:
             "media_type": "REELS", "video_url": video_url,
             "caption": caption, "share_to_feed": str(share_to_feed).lower(),
         })
+        await self._wait_for_video_container(str(container["id"]), page_token)
         published = await self._post(f"{instagram_id}/media_publish", page_token, {
             "creation_id": str(container["id"]),
         })
