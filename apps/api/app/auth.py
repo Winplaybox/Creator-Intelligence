@@ -50,7 +50,7 @@ async def login(body:LoginRequest,response:Response,db:AsyncSession=Depends(get_
 async def refresh(response:Response,request:Request,db:AsyncSession=Depends(get_db)):
  token=request.cookies.get("refresh_token")
  if not token: raise HTTPException(401,"Refresh session required")
- now=datetime.now(timezone.utc); session=await db.scalar(select(RefreshSession).where(RefreshSession.token_hash==hash_refresh_token(token),RefreshSession.revoked_at.is_(None)).with_for_update())
+ now=datetime.now(timezone.utc); session=await db.scalar(select(RefreshSession).where(RefreshSession.token_hash==hash_refresh_token(token),RefreshSession.revoked_at.is_(None)))
  if not session or session.expires_at<=now:
   if session: session.revoked_at=now; await db.commit()
   response.delete_cookie("refresh_token",path="/v1/auth"); raise HTTPException(401,"Refresh session expired or invalid")

@@ -1,4 +1,3 @@
-import asyncio
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
@@ -45,28 +44,21 @@ app.include_router(rbac_router)
 async def health(): return {"status":"ok","service":"api","version":"0.5.0"}
 @app.get("/ready",tags=["health"])
 async def ready(response: Response):
-    checks = {"database": "error", "redis": "error"}
+    checks = {"database": "unavailable", "redis": "unavailable"}
     try:
-        async with asyncio.timeout(3):
-            async with engine.connect() as connection:
-                await connection.execute(text("SELECT 1"))
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
         checks["database"] = "ok"
     except Exception:
         checks["database"] = "error"
-    redis = None
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
     try:
-        async with asyncio.timeout(3):
-            redis = Redis.from_url(settings.redis_url, decode_responses=True)
-            await redis.ping()
+        await redis.ping()
         checks["redis"] = "ok"
     except Exception:
         checks["redis"] = "error"
     finally:
-        if redis is not None:
-            try:
-                await redis.aclose()
-            except Exception:
-                pass
+        await redis.aclose()
     healthy = all(value == "ok" for value in checks.values())
     response.status_code = 200 if healthy else 503
     return {"status": "ready" if healthy else "not_ready", "checks": checks}
