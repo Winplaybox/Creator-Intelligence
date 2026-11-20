@@ -159,7 +159,7 @@ async def trend_history(workspace_id: UUID, region: str | None = None,
                        user: User = Depends(current_user)):
     await require_workspace(db, user, workspace_id)
     rows = await db.scalars(select(CreatorRecord).where(CreatorRecord.workspace_id == workspace_id,
-            CreatorRecord.module == "trend_history").order_by(desc(CreatorRecord.created_at).limit(limit))
+            CreatorRecord.module == "trend_history").order_by(desc(CreatorRecord.created_at)).limit(limit))
     snapshots = []
     for row in rows:
         payload = row.payload or {}
