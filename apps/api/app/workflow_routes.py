@@ -124,3 +124,78 @@ async def competitor_history(workspace_id: UUID, channel_id: str = Query(min_len
     await require_workspace(db, user, workspace_id)
     rows = await db.scalars(select(CreatorRecord).where(CreatorRecord.workspace_id==workspace_id,CreatorRecord.module=="competitors",CreatorRecord.payload["channel_id"].as_string()==channel_id).order_by(desc(CreatorRecord.created_at)).limit(limit))
     return {"channel_id":channel_id,"snapshots":[{"id":str(r.id),"created_at":r.created_at.isoformat(),"payload":r.payload} for r in rows]}
+
+
+# Wave 7: lightweight workspace content calendar and approval workflow.
+from typing import Literal
+from sqlalchemy import asc
+
+CalendarStatus = Literal["draft", "planned", "needs_review", "approved", "rejected", "in_production", "published"]
+
+class CalendarCreateRequest(BaseModel):
+    workspace_id: UUID
+    title: str = Field(min_length=3, max_length=240)
+    topic: str = Field(default="", max_length=160)
+    scheduled_at: datetime | None = None
+    platform: str = Field(default="youtube", max_length=40)
+    notes: str = Field(default="", max_length=4000)
+
+class CalendarStatusRequest(BaseModel):
+    workspace_id: UUID
+    status: CalendarStatus
+    notes: str = Field(default="", max_length=2000)
+
+
+
+@router.post("/calendar", status_code=201)
+async def create_calendar_item(body: CalendarCreateRequest, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)):
+    await require_workspace(db, user, body.workspace_id)
+    payload = {"topic": body.topic.strip(), "platform": body.platform.strip().lower(),
+               "scheduled_at": body.scheduled_at.isoformat() if body.scheduled_at else None,
+               "notes": body.notes, "approval_notes": []}
+    record = CreatorRecord(workspace_id=body.workspace_id, created_by=user.id, module="content_calendar",
+                         title=body.title.strip(), payload=payload, status="draft", due_at=body.scheduled_at)
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+    return {"id": str(record.id), "status": record.status, "title": record.title, "payload": record.payload,
+            "scheduled_at": record.due_at.isoformat() if record.due_at else None}
+
+
+@router.get("/calendar")
+async def list_calendar_items(workspace_id: UUID, status: CalendarStatus | None = None,
+                             limit: int = Query(100, ge=1, le=200), db: AsyncSession = Depends(get_db),
+                             user: User = Depends(current_user)):
+    await require_workspace(db, user, workspace_id)
+    query = select(CreatorRecord).where(CreatorRecord.workspace_id == workspace_id, CreatorRecord.module == "content_calendar")
+    if status:
+        query = query.where(CreatorRecord.status == status)
+    rows = await db.scalars(query.order_by(asc(CreatorRecord.due_at), desc(CreatorRecord.created_at)).limit(limit))
+    return {"workspace_id": str(workspace_id), "items": [{"id": str(r.id), "title": r.title, "status": r.status,
+            "payload": r.payload, "scheduled_at": r.due_at.isoformat() if r.due_at else None,
+            "created_at": r.created_at.isoformat()} for r in rows]}
+
+
+@router.patch("/calendar/{item_id}/status")
+async def update_calendar_status(item_id: UUID, body: CalendarStatusRequest,
+                               db: AsyncSession = Depends(get_db), user: User = Depends(current_user)):
+    await require_workspace(db, user, body.workspace_id)
+    record = await db.scalar(select(CreatorRecord).where(CreatorRecord.id == item_id,
+                    CreatorRecord.workspace_id == body.workspace_id, CreatorRecord.module == "content_calendar"))
+    if not record:
+        raise HTTPException(404, "Calendar item not found")
+    allowed = {"draft": {"planned", "needs_review"}, "planned": {"draft", "needs_review"},
+               "needs_review": {"approved", "rejected", "draft"}, "rejected": {"draft", "needs_review"},
+               "approved": {"in_production", "planned"}, "in_production": {"approved", "published"}, "published": set()}
+    if body.status not in allowed.get(record.status, set()):
+        raise HTTPException(409, f"Invalid status transition: {record.status} -> {body.status}")
+    record.status = body.status
+    payload = dict(record.payload or {})
+    if body.notes.strip():
+        history = list(payload.get("approval_notes", []))
+        history.append({"from": record.status, "to": body.status, "note": body.notes.strip(), "actor_id": str(user.id), "at": datetime.now(timezone.utc).isoformat()})
+        payload["approval_notes"] = history
+    record.payload = payload
+    await db.commit()
+    await db.refresh(record)
+    return {"id": str(record.id), "status": record.status, "payload": record.payload}
