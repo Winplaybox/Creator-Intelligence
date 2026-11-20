@@ -124,3 +124,46 @@ async def competitor_history(workspace_id: UUID, channel_id: str = Query(min_len
     await require_workspace(db, user, workspace_id)
     rows = await db.scalars(select(CreatorRecord).where(CreatorRecord.workspace_id==workspace_id,CreatorRecord.module=="competitors",CreatorRecord.payload["channel_id"].as_string()==channel_id).order_by(desc(CreatorRecord.created_at)).limit(limit))
     return {"channel_id":channel_id,"snapshots":[{"id":str(r.id),"created_at":r.created_at.isoformat(),"payload":r.payload} for r in rows]}
+
+
+# Wave 8: persisted trend snapshots and history comparison.
+from app.trend_scoring import rank_video_signals
+
+class TrendSnapshotRequest(BaseModel):
+    workspace_id: UUID
+    region: str = Field(default="IN", min_length=2, max_length=2)
+    source: str = Field(default="manual", max_length=32)
+    videos: list[dict] = Field(min_length=1, max_length=50)
+
+
+
+@router.post("/trend-snapshot", status_code=201)
+async def save_trend_snapshot(body: TrendSnapshotRequest, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)):
+    await require_workspace(db, user, body.workspace_id)
+    scored = rank_video_signals(body.videos)
+    snapshot_at = datetime.now(timezone.utc).isoformat()
+    payload = {"snapshot_at": snapshot_at, "region": body.region.upper(), "source": body.source,
+               "videos": scored, "count": len(scored),
+               "disclaimer": "Trend signals are heuristic scores computed from supplied public metrics and timestamps; they are not predictions."}
+    record = CreatorRecord(workspace_id=body.workspace_id, created_by=user.id, module="trend_history",
+                          title=f"Trend snapshot {body.region.upper()} {snapshot_at[:10]}", payload=payload, status="snapshot")
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+    return {"snapshot_id": str(record.id), "saved": True, "snapshot": payload}
+
+
+@router.get("/trend-history")
+async def trend_history(workspace_id: UUID, region: str | None = None,
+                       limit: int = Query(50, ge=1, le=100), db: AsyncSession = Depends(get_db),
+                       user: User = Depends(current_user)):
+    await require_workspace(db, user, workspace_id)
+    rows = await db.scalars(select(CreatorRecord).where(CreatorRecord.workspace_id == workspace_id,
+            CreatorRecord.module == "trend_history").order_by(desc(CreatorRecord.created_at).limit(limit))
+    snapshots = []
+    for row in rows:
+        payload = row.payload or {}
+        if region and str(payload.get("region", "")).upper() != region.upper():
+            continue
+        snapshots.append({"id": str(row.id), "created_at": row.created_at.isoformat(), "payload": payload})
+    return {"workspace_id": str(workspace_id), "region": region.upper() if region else None, "snapshots": snapshots}
