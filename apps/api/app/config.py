@@ -17,6 +17,9 @@ class Settings(BaseSettings):
  google_youtube_redirect_uri:str=""
  youtube_token_encryption_key:str=""
  youtube_daily_quota_limit:int=10000
+ ai_api_key:str=""
+ ai_base_url:str=""
+ ai_model:str=""
  @property
  def allowed_origins(self)->list[str]: return [x.strip() for x in self.cors_origins.split(",") if x.strip()]
 settings=Settings()
