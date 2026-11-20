@@ -5,7 +5,9 @@ from app.config import settings
 from app.db import engine
 from sqlalchemy import text
 from redis.asyncio import Redis
-from app.auth import router as auth_router\nfrom app.google_oauth_routes import router as google_oauth_router\nfrom app.integration_readiness import router as integration_readiness_router
+from app.auth import router as auth_router
+from app.google_oauth_routes import router as google_oauth_router
+from app.integration_readiness import router as integration_readiness_router
 from app.youtube_routes import router as youtube_router
 from app.analytics_routes import router as analytics_router
 from app.creator_features import router as creator_features_router
@@ -36,7 +38,7 @@ async def lifespan(_app):
 app=FastAPI(title=settings.app_name,version="0.7.0",docs_url="/docs" if not settings.is_production else None,redoc_url=None,openapi_url="/openapi.json" if not settings.is_production else None,lifespan=lifespan)
 app.add_middleware(RequestObservabilityMiddleware)
 app.add_middleware(CORSMiddleware,allow_origins=settings.allowed_origins,allow_credentials=True,allow_methods=["GET","POST","PUT","PATCH","DELETE"],allow_headers=["Authorization","Content-Type","X-Request-ID"])
-for r in [auth_router,google_oauth_router,integration_readiness_router,youtube_router,analytics_router,creator_features_router,research_router,intelligence_router,workflow_router,competitor_momentum_router,calendar_router,trend_history_router,publishing_queue_router,thumbnail_experiment_router,monetization_router,revenue_router,billing_router,notification_router,rbac_router,social_oauth_router,admin_router]:app.include_router(r)
+for r in [auth_router,google_oauth_router,integration_readiness_router,youtube_router,analytics_router,creator_features_router,research_router,intelligence_router,workflow_router,competitor_momentum_router,calendar_router,trend_history_router,publishing_queue_router,thumbnail_experiment_router,monetization_router,revenue_router,billing_router,billing_dodo_router,notification_router,rbac_router,social_oauth_router,admin_router]:app.include_router(r)
 @app.get("/health",tags=["health"])
 async def health():return {"status":"ok","service":"api","version":"0.6.0"}
 @app.get("/ready",tags=["health"])

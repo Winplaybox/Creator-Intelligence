@@ -9,7 +9,7 @@ from fastapi.responses import RedirectResponse
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.auth import make_response, slugify
+from app.auth import make_response, slugify, unique_username
 from app.config import settings
 from app.db import get_db
 from app.models import User, Workspace, Membership, RefreshSession
@@ -29,7 +29,8 @@ async def start_google_login():
     state = secrets.token_urlsafe(32)
     redis = _redis()
     try:
-        nonce = secrets.token_urlsafe(24)\n        await redis.set(f"google:oauth:{state}", nonce, ex=600, nx=True)
+        nonce = secrets.token_urlsafe(24)
+        await redis.set(f"google:oauth:{state}", nonce, ex=600, nx=True)
     finally:
         await redis.aclose()
     params = {
@@ -38,7 +39,8 @@ async def start_google_login():
         "response_type": "code",
         "scope": "openid email profile",
         "state": state,
-        "prompt": "select_account",\n        "nonce": nonce,
+        "prompt": "select_account",
+        "nonce": nonce,
     }
     return RedirectResponse(GOOGLE_AUTH + "?" + urlencode(params), status_code=302)
 
@@ -86,16 +88,29 @@ async def google_callback(code: str | None = None, state: str | None = None,
     subject = str(claims.get("sub", "")).strip()
     if not email or not subject:
         raise HTTPException(401, "Google identity is incomplete")
-    user = await db.scalar(select(User).where(User.email == email))
+    user = await db.scalar(select(User).where(User.google_sub == subject)) or await db.scalar(select(User).where(User.email == email))
     if user is None:
         display_name = str(claims.get("name") or email.split("@")[0])[:120]
-        user = User(email=email, password_hash=None, display_name=display_name, email_verified=True)
+        user = User(email=email, username=await unique_username(db, display_name, email), google_sub=subject,
+                    password_hash=None, display_name=display_name, email_verified=True)
         workspace = Workspace(name=f"{display_name}'s workspace", slug=slugify(display_name))
         db.add_all([user, workspace])
         await db.flush()
         db.add(Membership(user_id=user.id, workspace_id=workspace.id, role="owner"))
     elif not user.is_active:
         raise HTTPException(403, "Account disabled")
+    else:
+        if not user.email_verified and user.password_hash:
+            # Unverified password account on this email: Google proves ownership, so drop the unproven
+            # password and revoke its sessions (prevents pre-registering someone else's email).
+            user.password_hash = None
+            now = datetime.now(timezone.utc)
+            for session in await db.scalars(select(RefreshSession).where(RefreshSession.user_id == user.id,
+                                                                         RefreshSession.revoked_at.is_(None))):
+                session.revoked_at = now
+        user.google_sub, user.email_verified = subject, True
+        if not user.username:
+            user.username = await unique_username(db, user.display_name, email)
     membership = await db.scalar(select(Membership).where(Membership.user_id == user.id).order_by(Membership.id).limit(1))
     if membership is None:
         workspace = Workspace(name=f"{user.display_name or email}'s workspace", slug=slugify(user.display_name or email))
@@ -135,9 +150,12 @@ async def redeem_ticket(ticket: str, db: AsyncSession = Depends(get_db)):
     data = json.loads(raw)
     user = await db.get(User, data["user_id"])
     workspace = await db.get(Workspace, data["workspace_id"])
-    membership = await db.scalar(select(Membership).where(Membership.user_id == user.id, Membership.workspace_id == workspace.id))
+    membership = None
+    if user and workspace:
+        membership = await db.scalar(select(Membership).where(Membership.user_id == user.id, Membership.workspace_id == workspace.id))
     if not user or not workspace or not membership or not user.is_active:
         raise HTTPException(401, "Account unavailable")
     return {"access_token": data["access_token"], "expires_in": data["expires_in"],
-        "user": {"id": str(user.id), "email": user.email, "display_name": user.display_name},
+        "user": {"id": str(user.id), "email": user.email, "username": user.username, "display_name": user.display_name,
+                 "email_verified": user.email_verified},
         "workspace": {"id": str(workspace.id), "name": workspace.name, "slug": workspace.slug, "role": membership.role}}
