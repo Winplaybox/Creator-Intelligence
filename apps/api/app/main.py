@@ -18,6 +18,9 @@ from app.publishing_queue_routes import router as publishing_queue_router
 from app.thumbnail_experiment_routes import router as thumbnail_experiment_router
 from app.monetization_routes import router as monetization_router
 from app.revenue_routes import router as revenue_router
+from app.billing_routes import router as billing_router
+from app.notification_routes import router as notification_router
+from app.rbac_routes import router as rbac_router
 app=FastAPI(title=settings.app_name,version="0.5.0",docs_url="/docs" if settings.app_env!="production" else None,redoc_url=None)
 app.add_middleware(CORSMiddleware,allow_origins=settings.allowed_origins,allow_credentials=True,allow_methods=["GET","POST","PUT","PATCH","DELETE"],allow_headers=["Authorization","Content-Type","X-Request-ID"])
 app.include_router(auth_router)
@@ -34,6 +37,9 @@ app.include_router(publishing_queue_router)
 app.include_router(thumbnail_experiment_router)
 app.include_router(monetization_router)
 app.include_router(revenue_router)
+app.include_router(billing_router)
+app.include_router(notification_router)
+app.include_router(rbac_router)
 @app.get("/health",tags=["health"])
 async def health(): return {"status":"ok","service":"api","version":"0.5.0"}
 @app.get("/ready",tags=["health"])
