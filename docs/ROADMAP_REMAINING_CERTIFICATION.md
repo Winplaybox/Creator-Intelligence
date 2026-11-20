@@ -11,10 +11,13 @@
 
 ## Wave 28 — Instagram reliability (partial)
 - Reels container processing is polled before media publish.
-- Still required: secure media ingestion/upload, strict URL validation against SSRF, photo container readiness checks, provider reconciliation, real-account integration tests.
+- Implemented in follow-up: public HTTPS URL checks reject credentials, non-443 ports, localhost/local hosts, and private/reserved IP literals. Photo and Reel containers both wait for `FINISHED` before publish.
+- Remaining: application-controlled media hosting/allowlist and DNS-rebinding defenses, provider reconciliation, real-account integration tests.
 
-## Wave 29 — YouTube publishing (not implemented)
-- Existing OAuth and analytics are read-only. Upload scope, upload adapter, resumable upload flow, scheduling and queue integration remain required.
+## Wave 29 — YouTube publishing (partial)
+- OAuth now requests the `youtube.upload` scope in addition to read/analytics scopes (users must reconnect to grant it).
+- Added a worker-side resumable upload primitive with streamed file chunks and metadata/privacy validation.
+- Still required: token refresh/permission gating in upload worker, queue integration, scheduling/retries, integration tests, and provider reconciliation.
 
 ## Wave 30 — billing (not implemented)
 - Plan catalog and usage ledger are foundations only. Payment checkout, signature-verified webhooks, subscription lifecycle and atomic entitlement enforcement remain required.

@@ -54,7 +54,7 @@ def authorization_url(state: str, challenge: str) -> str:
       "client_id":settings.google_client_id,
       "redirect_uri":settings.google_youtube_redirect_uri,
       "response_type":"code",
-      "scope":"https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly",
+      "scope":"https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly",
       "access_type":"offline","prompt":"consent","include_granted_scopes":"true",
       "state":state,"code_challenge":challenge,"code_challenge_method":"S256"
     }
