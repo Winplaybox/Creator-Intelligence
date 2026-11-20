@@ -20,6 +20,15 @@ class PublishResult:
     provider_post_id: str
 
 
+def classify_container_status(status_code: str | None) -> str:
+    code = (status_code or \"\").strip().upper()
+    if code == \"FINISHED\":
+        return \"ready\"
+    if code in {\"ERROR\", \"EXPIRED\"}:
+        return \"failed\"
+    return \"pending\"
+
+
 class MetaPublisher:
     def __init__(self, graph_version: str = "v23.0", timeout: float = 30.0):
         self.base_url = f"https://graph.facebook.com/{graph_version}"
