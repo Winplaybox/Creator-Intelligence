@@ -12,7 +12,7 @@ class Settings(BaseSettings):
  jwt_access_minutes:int=15
  jwt_refresh_days:int=30
  cookie_secure:bool=False
- google_client_id:str=""
+ google_client_id:str=""\n youtube_api_key:str=""
  google_client_secret:str=""
  google_youtube_redirect_uri:str=""
  youtube_token_encryption_key:str=""
