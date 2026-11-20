@@ -11,6 +11,7 @@ from app.workflow_routes import router as workflow_router
 from app.competitor_momentum import router as competitor_momentum_router
 from app.calendar_routes import router as calendar_router
 from app.trend_history_routes import router as trend_history_router
+from app.publishing_queue_routes import router as publishing_queue_router
 app=FastAPI(title=settings.app_name,version="0.5.0",docs_url="/docs" if settings.app_env!="production" else None,redoc_url=None)
 app.add_middleware(CORSMiddleware,allow_origins=settings.allowed_origins,allow_credentials=True,allow_methods=["GET","POST","PUT","PATCH","DELETE"],allow_headers=["Authorization","Content-Type","X-Request-ID"])
 app.include_router(auth_router)
@@ -23,6 +24,7 @@ app.include_router(workflow_router)
 app.include_router(competitor_momentum_router)
 app.include_router(calendar_router)
 app.include_router(trend_history_router)
+app.include_router(publishing_queue_router)
 @app.get("/health",tags=["health"])
 async def health(): return {"status":"ok","service":"api","version":"0.5.0"}
 @app.get("/ready",tags=["health"])
