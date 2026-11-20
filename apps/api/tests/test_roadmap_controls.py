@@ -31,4 +31,4 @@ def test_notification_preferences_require_both_opt_ins():
     prefs = {"channels": {"email": True}, "categories": {"product": True}}
     assert notification_allowed(prefs, "email", "product")
     assert not notification_allowed(prefs, "email", "billing")
-    assert not notification_allowed({**prefs, "unsubscribed": True}, "email", "product)
+    assert not notification_allowed({**prefs, "unsubscribed": True}, "email", "product")
