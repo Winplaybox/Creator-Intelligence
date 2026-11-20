@@ -124,3 +124,40 @@ async def competitor_history(workspace_id: UUID, channel_id: str = Query(min_len
     await require_workspace(db, user, workspace_id)
     rows = await db.scalars(select(CreatorRecord).where(CreatorRecord.workspace_id==workspace_id,CreatorRecord.module=="competitors",CreatorRecord.payload["channel_id"].as_string()==channel_id).order_by(desc(CreatorRecord.created_at)).limit(limit))
     return {"channel_id":channel_id,"snapshots":[{"id":str(r.id),"created_at":r.created_at.isoformat(),"payload":r.payload} for r in rows]}
+
+
+# Wave 6: deterministic content-opportunity prioritization (heuristic, not prediction).
+class OpportunityCandidate(BaseModel):
+    topic: str = Field(min_length=2, max_length=160)
+    trend_score: float = Field(default=0, ge=0, le=100)
+    competition: float = Field(default=50, ge=0, le=100, description="User-estimated competition; higher means more crowded")
+    audience_fit: float = Field(default=50, ge=0, le=100)
+    covered: bool = False
+    evidence_count: int = Field(default=0, ge=0, le=10000)
+
+class OpportunityRankRequest(BaseModel):
+    workspace_id: UUID
+    candidates: list[OpportunityCandidate] = Field(min_length=1, max_length=50)
+
+
+
+@router.post("/opportunity-rank")
+async def opportunity_rank(body: OpportunityRankRequest, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)):
+    await require_workspace(db, user, body.workspace_id)
+    ranked = []
+    for item in body.candidates:
+        # Blend normalized signals; competition is inverse. Coverage is a modest penalty,
+        # never an exclusion, so creators can revisit proven subjects.
+        coverage_penalty = 12 if item.covered else 0
+        score = (item.trend_score * 0.45 + item.audience_fit * 0.35 + (100 - item.competition) * 0.20) - coverage_penalty
+        score = round(max(0.0, min(100.0, score)), 2)
+        ranked.append({"topic": item.topic.strip(), "score": score,
+                     "components": {"trend": item.trend_score, "audience_fit": item.audience_fit,
+                                   "competition_opportunity": round(100-item.competition, 2),
+                                   "coverage_penalty": coverage_penalty},
+                     "evidence_count": item.evidence_count,
+                     "recommendation": "prioritize" if score >= 70 else "test" if score >= 45 else "defer"})
+    ranked.sort(key=lambda row: row["score"], reverse=True)
+    return {"workspace_id": str(body.workspace_id), "ranked_opportunities": ranked,
+            "method": {"weights": {"trend": 0.45, "audience_fit": 0.35, "competition_opportunity": 0.20}, "coverage_penalty_points": 12,
+                      "note": "Scores are heuristic prioritization aids, not predictions of views or virality. Inputs are user-supplied and evidence_count does not independently validate data."}}
