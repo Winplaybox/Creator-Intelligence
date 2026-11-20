@@ -56,3 +56,16 @@ class YouTubeChannel(Base):
  scopes:Mapped[list]=mapped_column(JSONB,default=list,nullable=False)
  created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
  updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
+
+class CreatorRecord(Base):
+ __tablename__="creator_records"
+ id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
+ workspace_id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("workspaces.id",ondelete="CASCADE"),nullable=False,index=True)
+ created_by:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("users.id",ondelete="CASCADE"),nullable=False)
+ module:Mapped[str]=mapped_column(String(40),nullable=False,index=True)
+ title:Mapped[str]=mapped_column(String(240),nullable=False)
+ payload:Mapped[dict]=mapped_column(JSONB,default=dict,nullable=False)
+ status:Mapped[str]=mapped_column(String(40),default="draft",nullable=False)
+ due_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
+ created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
+ updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
