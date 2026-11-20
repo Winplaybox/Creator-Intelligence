@@ -4,7 +4,7 @@ This module coordinates queue records; it does not publish to social platforms.
 A worker must claim an item, perform provider publishing, and report the result.
 """
 from datetime import datetime, timedelta, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -137,7 +137,7 @@ async def claim_next(
     if record is None:
         return {"claimed": False, "item": None}
     payload = dict(record.payload or {})
-    token = UUID(int=__import__("uuid").uuid4().int).hex
+    token = uuid4().hex
     expires = now + timedelta(seconds=lease_seconds)
     payload["lease"] = {"token": token, "expires_at": expires.isoformat(), "worker_user_id": str(user.id)}
     payload["attempts"] = int(payload.get("attempts", 0)) + 1
