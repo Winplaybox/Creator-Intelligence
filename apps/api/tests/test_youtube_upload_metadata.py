@@ -1,5 +1,5 @@
 import pytest
-from app.services.youtube_upload import validate_video_metadata, YouTubeUploadError
+from app.services.youtube_upload import validate_video_metadata, YouTubeUploadError, CHUNK_SIZE
 
 
 def test_video_metadata_defaults_to_private():
@@ -37,3 +37,8 @@ def test_video_metadata_preserves_description_tags_and_privacy():
 def test_video_metadata_rejects_invalid_values(metadata):
     with pytest.raises(YouTubeUploadError):
         validate_video_metadata(metadata)
+
+
+def test_upload_chunk_size_is_google_resumable_chunk_aligned():
+    assert CHUNK_SIZE % (256 * 1024) == 0
+    assert CHUNK_SIZE == 8 * 1024 * 1024
