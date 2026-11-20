@@ -8,16 +8,39 @@ permissions:
 jobs:
   api-check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: creator
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U creator -d ci" --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      PYTHONPATH: apps/api
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r apps/api/requirements-dev.txt
-      - run: python -m compileall apps/api/app
-      - run: pytest apps/api/tests
+      - name: Compile (catches syntax errors before merge)
+        run: python -m compileall -q apps/api/app apps/api/migrations apps/api/tests
+      - name: Migrations upgrade / downgrade / upgrade
+        working-directory: apps/api
         env:
-          PYTHONPATH: apps/api
+          DATABASE_URL: postgresql+asyncpg://creator:ci-password@127.0.0.1:5432/ci
+        run: alembic upgrade head && alembic downgrade base && alembic upgrade head
+      - name: Unit + integration tests
+        env:
+          INTEGRATION_DATABASE_URL: postgresql+asyncpg://creator:ci-password@127.0.0.1:5432/ci
+          INTEGRATION_REDIS_URL: redis://127.0.0.1:6379/0
+        run: pytest -q apps/api/tests
   web-check:
     runs-on: ubuntu-latest
     steps:
@@ -31,3 +54,18 @@ jobs:
           cache: pnpm
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm --filter web typecheck
+      - run: pnpm --filter web build
+        env:
+          NEXT_PUBLIC_API_URL: https://creator-api.winplaybox.in
+  images:
+    runs-on: ubuntu-latest
+    needs: [api-check, web-check]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t creator-api:ci apps/api
+      - run: docker build -t creator-web:ci -f apps/web/Dockerfile .
+      - name: Validate production compose
+        run: |
+          cp .env.production.example .env.production
+          sed -i 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=ci/;s/^REDIS_PASSWORD=$/REDIS_PASSWORD=ci/;s/^JWT_SECRET=$/JWT_SECRET=ci/' .env.production
+          docker compose -f docker-compose.prod.yml --env-file .env.production config --quiet

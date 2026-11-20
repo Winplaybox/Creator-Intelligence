@@ -11,3 +11,6 @@ __pycache__/
 !.env.example
 coverage/
 .pytest_cache/
+!.env.production.example
+dump.rdb
+*.tsbuildinfo

@@ -1,0 +1,129 @@
+# Creator Intelligence production stack (Hostinger VPS, next to OVD).
+# TLS/ingress is the OVD stack's Caddy: ci-web and ci-api join its `winplaybox_edge` network.
+# Nothing here publishes a host port. Start OVD first (it creates the network), then:
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+x-api-env: &api-env
+  APP_ENV: production
+  WEB_BASE_URL: "${WEB_BASE_URL:-https://creator.winplaybox.in}"
+  CORS_ORIGINS: "${CORS_ORIGINS:-https://creator.winplaybox.in}"
+  DATABASE_URL: "postgresql+asyncpg://creator:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/creator_intelligence"
+  REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD}@redis:6379/0"
+  JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET}"
+  COOKIE_SECURE: "true"
+  TRUST_PROXY: "true"
+  ADMIN_EMAILS: "${ADMIN_EMAILS:?Set ADMIN_EMAILS}"
+  GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+  GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
+  GOOGLE_YOUTUBE_REDIRECT_URI: "${GOOGLE_YOUTUBE_REDIRECT_URI:-}"
+  YOUTUBE_TOKEN_ENCRYPTION_KEY: "${YOUTUBE_TOKEN_ENCRYPTION_KEY:-}"
+  YOUTUBE_API_KEY: "${YOUTUBE_API_KEY:-}"
+  SOCIAL_TOKEN_ENCRYPTION_KEY: "${SOCIAL_TOKEN_ENCRYPTION_KEY:-}"
+  META_CLIENT_ID: "${META_CLIENT_ID:-}"
+  META_CLIENT_SECRET: "${META_CLIENT_SECRET:-}"
+  META_OAUTH_REDIRECT_URI: "${META_OAUTH_REDIRECT_URI:-}"
+  AI_API_KEY: "${AI_API_KEY:-}"
+  AI_BASE_URL: "${AI_BASE_URL:-}"
+  AI_MODEL: "${AI_MODEL:-}"
+  DODO_ENV: "${DODO_ENV:-live}"
+  DODO_API_KEY: "${DODO_API_KEY:-}"
+  DODO_WEBHOOK_SECRET: "${DODO_WEBHOOK_SECRET:-}"
+  DODO_PRODUCT_CREATOR_MONTHLY: "${DODO_PRODUCT_CREATOR_MONTHLY:-}"
+  DODO_PRODUCT_CREATOR_YEARLY: "${DODO_PRODUCT_CREATOR_YEARLY:-}"
+  DODO_PRODUCT_PRO_MONTHLY: "${DODO_PRODUCT_PRO_MONTHLY:-}"
+  DODO_PRODUCT_PRO_YEARLY: "${DODO_PRODUCT_PRO_YEARLY:-}"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: creator
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+      POSTGRES_DB: creator_intelligence
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U creator -d creator_intelligence"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 768m
+    security_opt: ["no-new-privileges:true"]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --maxmemory 128mb --maxmemory-policy noeviction"]
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD}"
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    mem_limit: 192m
+    security_opt: ["no-new-privileges:true"]
+
+  ci-api:
+    build: ./apps/api
+    image: creator-api:latest
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+      API_WORKERS: "${API_WORKERS:-2}"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks:
+      default: {}
+      edge: { aliases: [ci-api] }
+    mem_limit: 768m
+    cpus: "0.75"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  ci-worker:
+    image: creator-api:latest
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    healthcheck:
+      disable: true
+    environment:
+      <<: *api-env
+      PUBLISHING_WORKER_ENABLED: "${PUBLISHING_WORKER_ENABLED:-false}"
+      YOUTUBE_PUBLISHING_WORKER_ENABLED: "${YOUTUBE_PUBLISHING_WORKER_ENABLED:-false}"
+      YOUTUBE_UPLOAD_ROOT: /uploads
+    volumes: [youtube_uploads:/uploads]
+    depends_on:
+      ci-api: { condition: service_healthy }
+    mem_limit: 512m
+    cpus: "0.5"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  ci-web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-https://creator-api.winplaybox.in}"
+        NEXT_PUBLIC_SITE_URL: "${WEB_BASE_URL:-https://creator.winplaybox.in}"
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+    restart: unless-stopped
+    networks:
+      default: {}
+      edge: { aliases: [ci-web] }
+    depends_on: [ci-api]
+    mem_limit: 512m
+    cpus: "0.5"
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  edge:
+    external: true
+    name: winplaybox_edge
+
+volumes:
+  postgres_data:
+  redis_data:
+  youtube_uploads:

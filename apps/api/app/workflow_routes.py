@@ -103,7 +103,8 @@ async def content_gaps(body: ContentGapRequest, db: AsyncSession = Depends(get_d
             results.append({"topic":normalized,"covered":overlap,"opportunity":"explore" if not overlap and items else "already_covered" if overlap else "low_data","sample_titles":titles,"result_count":len(items)})
     return {"workspace_id":str(body.workspace_id),"region":body.region.upper(),"topics":results,"note":"Topic coverage is based on user-provided covered topics and public search samples, not a measured market-demand estimate."}
 
-@router.post("/competitor-snapshot", status_code=201)async def save_competitor_snapshot(body: CompetitorSnapshotRequest, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)):
+@router.post("/competitor-snapshot", status_code=201)
+async def save_competitor_snapshot(body: CompetitorSnapshotRequest, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)):
     await require_workspace(db, user, body.workspace_id)
     async with httpx.AsyncClient(timeout=20) as client:
         channels = await yt_get(client, "channels", {"part":"snippet,statistics", "id":body.channel_id})

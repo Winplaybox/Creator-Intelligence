@@ -9,7 +9,10 @@ export default function HomePage() {
   return <main style={{ maxWidth: 1180, margin: "0 auto", padding: "48px 24px" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 24, marginBottom: 64 }}>
       <div style={{ fontWeight: 750, letterSpacing: "-.04em", fontSize: 20 }}>Creator Intelligence <span style={{ color: "#a5b4fc" }}>Studio</span></div>
-      <span style={{ color: "#aab2c2", fontSize: 14 }}>Platform foundation</span>
+      <nav style={{ display: "flex", gap: 12 }}>
+        <a href="/login" style={{ color: "#aab2c2", fontSize: 14 }}>Sign in</a>
+        <a href="/login" style={{ color: "#0b0e14", background: "#a5b4fc", borderRadius: 10, padding: "6px 14px", fontSize: 14, fontWeight: 650 }}>Get started</a>
+      </nav>
     </header>
     <section style={{ maxWidth: 760 }}>
       <p style={{ color: "#a5b4fc", fontWeight: 650, letterSpacing: ".12em", textTransform: "uppercase", fontSize: 12 }}>Creator workspace</p>
