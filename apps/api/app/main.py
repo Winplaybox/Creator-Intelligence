@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import FastAPI, Response
+from fastapi import FastAPI,Response
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.db import engine
@@ -23,52 +23,29 @@ from app.billing_routes import router as billing_router
 from app.notification_routes import router as notification_router
 from app.rbac_routes import router as rbac_router
 from app.social_oauth_routes import router as social_oauth_router
-app=FastAPI(title=settings.app_name,version="0.5.0",docs_url="/docs" if settings.app_env!="production" else None,redoc_url=None)
+from app.admin_routes import router as admin_router
+from app.middleware import RequestObservabilityMiddleware
+app=FastAPI(title=settings.app_name,version="0.6.0",docs_url="/docs" if settings.app_env!="production" else None,redoc_url=None)
+app.add_middleware(RequestObservabilityMiddleware)
 app.add_middleware(CORSMiddleware,allow_origins=settings.allowed_origins,allow_credentials=True,allow_methods=["GET","POST","PUT","PATCH","DELETE"],allow_headers=["Authorization","Content-Type","X-Request-ID"])
-app.include_router(auth_router)
-app.include_router(youtube_router)
-app.include_router(analytics_router)
-app.include_router(creator_features_router)
-app.include_router(research_router)
-app.include_router(intelligence_router)
-app.include_router(workflow_router)
-app.include_router(competitor_momentum_router)
-app.include_router(calendar_router)
-app.include_router(trend_history_router)
-app.include_router(publishing_queue_router)
-app.include_router(thumbnail_experiment_router)
-app.include_router(monetization_router)
-app.include_router(revenue_router)
-app.include_router(billing_router)
-app.include_router(notification_router)
-app.include_router(rbac_router)
-app.include_router(social_oauth_router)
+for r in [auth_router,youtube_router,analytics_router,creator_features_router,research_router,intelligence_router,workflow_router,competitor_momentum_router,calendar_router,trend_history_router,publishing_queue_router,thumbnail_experiment_router,monetization_router,revenue_router,billing_router,notification_router,rbac_router,social_oauth_router,admin_router]:app.include_router(r)
 @app.get("/health",tags=["health"])
-async def health(): return {"status":"ok","service":"api","version":"0.5.0"}
+async def health():return {"status":"ok","service":"api","version":"0.6.0"}
 @app.get("/ready",tags=["health"])
-async def ready(response: Response):
-    checks = {"database": "error", "redis": "error"}
-    try:
-        async with asyncio.timeout(3):
-            async with engine.connect() as connection:
-                await connection.execute(text("SELECT 1"))
-        checks["database"] = "ok"
-    except Exception:
-        checks["database"] = "error"
-    redis = None
-    try:
-        async with asyncio.timeout(3):
-            redis = Redis.from_url(settings.redis_url, decode_responses=True)
-            await redis.ping()
-        checks["redis"] = "ok"
-    except Exception:
-        checks["redis"] = "error"
-    finally:
-        if redis is not None:
-            try:
-                await redis.aclose()
-            except Exception:
-                pass
-    healthy = all(value == "ok" for value in checks.values())
-    response.status_code = 200 if healthy else 503
-    return {"status": "ready" if healthy else "not_ready", "checks": checks}
+async def ready(response:Response):
+ checks={"database":"error","redis":"error"}
+ try:
+  async with asyncio.timeout(3):
+   async with engine.connect() as c:await c.execute(text("SELECT 1"))
+  checks["database"]="ok"
+ except Exception:checks["database"]="error"
+ redis=None
+ try:
+  async with asyncio.timeout(3):redis=Redis.from_url(settings.redis_url,decode_responses=True);await redis.ping();checks["redis"]="ok"
+ except Exception:checks["redis"]="error"
+ finally:
+  if redis:
+   try:await redis.aclose()
+   except Exception:pass
+ if any(v!="ok" for v in checks.values()):response.status_code=503
+ return {"status":"ok" if response.status_code==200 else "degraded","checks":checks}
