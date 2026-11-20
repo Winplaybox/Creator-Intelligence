@@ -29,7 +29,7 @@ async def start_google_login():
     state = secrets.token_urlsafe(32)
     redis = _redis()
     try:
-        await redis.set(f"google:oauth:{state}", "login", ex=600, nx=True)
+        nonce = secrets.token_urlsafe(24)\n        await redis.set(f"google:oauth:{state}", nonce, ex=600, nx=True)
     finally:
         await redis.aclose()
     params = {
@@ -38,7 +38,7 @@ async def start_google_login():
         "response_type": "code",
         "scope": "openid email profile",
         "state": state,
-        "prompt": "select_account",
+        "prompt": "select_account",\n        "nonce": nonce,
     }
     return RedirectResponse(GOOGLE_AUTH + "?" + urlencode(params), status_code=302)
 
@@ -78,7 +78,7 @@ async def google_callback(code: str | None = None, state: str | None = None,
         if verify_response.status_code != 200:
             raise HTTPException(401, "Google ID token validation failed")
         claims = verify_response.json()
-    if claims.get("aud") != settings.google_client_id or claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+    if claims.get("aud") != settings.google_client_id or claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com") or claims.get("nonce") != consumed:
         raise HTTPException(401, "Invalid Google token audience or issuer")
     if claims.get("email_verified") not in (True, "true"):
         raise HTTPException(403, "Google email must be verified")
