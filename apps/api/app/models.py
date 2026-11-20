@@ -1,0 +1,43 @@
+import uuid
+from datetime import datetime,timezone
+from sqlalchemy import String,DateTime,Boolean,ForeignKey,UniqueConstraint,Index
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped,mapped_column,relationship
+from app.db import Base
+def now_utc(): return datetime.now(timezone.utc)
+class User(Base):
+ __tablename__="users"
+ id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
+ email:Mapped[str]=mapped_column(String(320),unique=True,index=True,nullable=False)
+ password_hash:Mapped[str|None]=mapped_column(String(255))
+ display_name:Mapped[str]=mapped_column(String(120),default="")
+ email_verified:Mapped[bool]=mapped_column(Boolean,default=False,nullable=False)
+ is_active:Mapped[bool]=mapped_column(Boolean,default=True,nullable=False)
+ created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
+ memberships:Mapped[list["Membership"]]=relationship(back_populates="user",cascade="all,delete-orphan")
+class Workspace(Base):
+ __tablename__="workspaces"
+ id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
+ name:Mapped[str]=mapped_column(String(120),nullable=False)
+ slug:Mapped[str]=mapped_column(String(120),unique=True,index=True,nullable=False)
+ created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
+ memberships:Mapped[list["Membership"]]=relationship(back_populates="workspace",cascade="all,delete-orphan")
+class Membership(Base):
+ __tablename__="workspace_memberships"
+ __table_args__=(UniqueConstraint("user_id","workspace_id",name="uq_membership_user_workspace"),)
+ id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
+ user_id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("users.id",ondelete="CASCADE"),nullable=False,index=True)
+ workspace_id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("workspaces.id",ondelete="CASCADE"),nullable=False,index=True)
+ role:Mapped[str]=mapped_column(String(24),default="owner",nullable=False)
+ user:Mapped[User]=relationship(back_populates="memberships"
+ )
+ workspace:Mapped[Workspace]=relationship(back_populates="memberships")
+class RefreshSession(Base):
+ __tablename__="refresh_sessions"
+ __table_args__=(Index("ix_refresh_user_active","user_id","revoked_at"),)
+ id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
+ user_id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("users.id",ondelete="CASCADE"),nullable=False,index=True)
+ token_hash:Mapped[str]=mapped_column(String(64),unique=True,nullable=False)
+ expires_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False)
+ revoked_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
+ created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
