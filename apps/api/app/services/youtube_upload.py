@@ -1,19 +1,18 @@
 """Resumable YouTube Data API upload primitive.
 
-This module is a worker-side building block. It does not expose upload endpoints
-or activate publishing by itself.
+This module is worker-side only; it does not expose an upload endpoint or
+activate publishing by itself.
 """
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 import httpx
 
 YOUTUBE_UPLOAD_INIT = "https://www.googleapis.com/upload/youtube/v3/videos"
-CHUNK_SIZE = 8 * 1024 * 1024
+CHUNK_SIZE = 8 * 1024 * 1024  # divisible by Google's 256 KiB resumable chunk unit
 
 
 class YouTubeUploadError(RuntimeError):
@@ -44,13 +43,10 @@ def validate_video_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _file_chunks(path: Path, chunk_size: int = CHUNK_SIZE) -> AsyncIterator[bytes]:
-    with path.open("rb") as source:
-        while True:
-            chunk = source.read(chunk_size)
-            if not chunk:
-                break
-            yield chunk
+def _validate_session_url(url: str) -> None:
+    parsed = httpx.URL(url)
+    if parsed.scheme != "https" or parsed.host is None or not parsed.host.endswith("googleapis.com"):
+        raise YouTubeUploadError("Provider returned an invalid resumable upload URL")
 
 
 async def resumable_upload(
@@ -59,12 +55,13 @@ async def resumable_upload(
     metadata: dict[str, Any],
     *,
     timeout: float = 120.0,
+    chunk_size: int = CHUNK_SIZE,
 ) -> dict[str, Any]:
-    """Upload a local video using Google's resumable protocol.
+    """Upload a local file using bounded chunked PUTs and Google's resumable protocol.
 
-    The caller is responsible for token refresh, quota accounting, queue leases,
-    and persisting the returned provider video ID. File is streamed in bounded
-    chunks; no full-file buffering is performed.
+    The caller owns token refresh, queue leases, quota, retries across process
+    restarts, and persisting the provider video ID. This helper never buffers the
+    entire video in memory.
     """
     path = Path(file_path)
     if not access_token:
@@ -74,6 +71,8 @@ async def resumable_upload(
     size = path.stat().st_size
     if size <= 0:
         raise YouTubeUploadError("Upload file is empty")
+    if chunk_size <= 0 or chunk_size % (256 * 1024) != 0:
+        raise YouTubeUploadError("Chunk size must be a positive multiple of 256 KiB")
     body = validate_video_metadata(metadata)
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -93,18 +92,49 @@ async def resumable_upload(
             upload_url = init.headers.get("Location")
             if not upload_url:
                 raise YouTubeUploadError("Provider did not return a resumable upload URL")
-            upload_headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "video/*",
-                "Content-Length": str(size),
-            }
-            response = await client.put(upload_url, headers=upload_headers, content=_file_chunks(path))
-            response.raise_for_status()
-            result = response.json()
+            _validate_session_url(upload_url)
+
+            result: dict[str, Any] | None = None
+            offset = 0
+            with path.open("rb") as source:
+                while offset < size:
+                    chunk = source.read(min(chunk_size, size - offset))
+                    if not chunk:
+                        raise YouTubeUploadError("Video file ended before the declared size")
+                    end = offset + len(chunk) - 1
+                    chunk_headers = {
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "video/*",
+                        "Content-Length": str(len(chunk)),
+                        "Content-Range": f"bytes {offset}-{end}/{size}",
+                    }
+                    response = await client.put(upload_url, headers=chunk_headers, content=chunk)
+                    if response.status_code in (200, 201):
+                        result = response.json()
+                        offset = end + 1
+                        break
+                    if response.status_code == 308:
+                        # The server's Range header indicates the last persisted byte.
+                        persisted = response.headers.get("Range")
+                        if persisted and persisted.startswith("bytes=0-"):
+                            try:
+                                acknowledged = int(persisted.split("-", 1)[1]) + 1
+                            except ValueError as exc:
+                                raise YouTubeUploadError("YouTube returned an invalid upload Range") from exc
+                            if acknowledged <= offset or acknowledged > end + 1:
+                                raise YouTubeUploadError("YouTube returned an unexpected upload offset")
+                            offset = acknowledged
+                            source.seek(offset)
+                            continue
+                        # No Range means no bytes persisted; retry the same chunk once
+                        # is intentionally avoided here to prevent an infinite loop.
+                        raise YouTubeUploadError("YouTube did not acknowledge the uploaded chunk")
+                    response.raise_for_status()
+                    raise YouTubeUploadError("Unexpected response from YouTube resumable upload")
+            if not isinstance(result, dict) or not result.get("id"):
+                raise YouTubeUploadError("YouTube returned no video ID")
+            return result
     except YouTubeUploadError:
         raise
     except (httpx.HTTPError, ValueError) as exc:
         raise YouTubeUploadError("YouTube resumable upload failed") from exc
-    if not isinstance(result, dict) or not result.get("id"):
-        raise YouTubeUploadError("YouTube returned no video ID")
-    return result
