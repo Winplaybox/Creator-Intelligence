@@ -1,7 +1,7 @@
 """Google OAuth and YouTube API integration with encrypted credential storage."""
 from __future__ import annotations
 import base64, hashlib, secrets, json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 from cryptography.fernet import Fernet, InvalidToken
 import httpx
@@ -14,6 +14,7 @@ from app.models import YouTubeChannel
 GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3"
+TOKEN_REFRESH_SKEW_SECONDS = 90
 
 def _fernet() -> Fernet:
     key = settings.youtube_token_encryption_key
@@ -44,7 +45,6 @@ async def create_oauth_state(redis: Redis, user_id: str, workspace_id: str, veri
     return state
 
 async def consume_oauth_state(redis: Redis, state: str) -> dict[str, str] | None:
-    # Redis GETDEL prevents callback replay on supported Redis versions.
     value = await redis.getdel(f"youtube:oauth:{state}")
     return json.loads(value) if value else None
 
@@ -71,6 +71,50 @@ async def exchange_code(code: str, verifier: str) -> dict[str, Any]:
         response.raise_for_status()
         return response.json()
 
+async def refresh_access_token(refresh_token: str) -> dict[str, Any]:
+    """Exchange a stored refresh token for a new access token."""
+    if not refresh_token:
+        raise RuntimeError("YouTube refresh token is unavailable; reconnect the channel")
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(GOOGLE_TOKEN, data={
+            "client_id": settings.google_client_id,
+            "client_secret": settings.google_client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        })
+        response.raise_for_status()
+        data = response.json()
+    if not data.get("access_token"):
+        raise RuntimeError("Google token refresh response did not contain an access token")
+    return data
+
+async def get_valid_access_token(db: AsyncSession, channel: YouTubeChannel, *, skew_seconds: int = TOKEN_REFRESH_SKEW_SECONDS) -> str:
+    """Return a usable token and persist refreshed credentials when near expiry.
+
+    Callers should load the channel row with a DB lock if concurrent refreshes
+    are possible. This helper intentionally does not silently reconnect revoked
+    credentials.
+    """
+    now = datetime.now(timezone.utc)
+    expiry = channel.token_expires_at
+    if expiry and expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    if expiry and expiry > now + timedelta(seconds=skew_seconds):
+        return decrypt_token(channel.access_token_encrypted)
+    if not channel.refresh_token_encrypted:
+        raise RuntimeError("YouTube refresh token is missing; reconnect the channel")
+    refresh = decrypt_token(channel.refresh_token_encrypted)
+    token = await refresh_access_token(refresh)
+    expires_in = int(token.get("expires_in", 3600))
+    channel.access_token_encrypted = encrypt_token(token["access_token"])
+    channel.token_expires_at = now + timedelta(seconds=expires_in)
+    # Google normally omits refresh_token on refresh; retain the existing one.
+    if token.get("refresh_token"):
+        channel.refresh_token_encrypted = encrypt_token(token["refresh_token"])
+    channel.updated_at = now
+    await db.commit()
+    return token["access_token"]
+
 async def fetch_channel(access_token: str) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.get(f"{YOUTUBE_API}/channels",params={"part":"snippet,statistics,contentDetails","mine":"true"},headers={"Authorization":f"Bearer {access_token}"})
@@ -84,7 +128,7 @@ async def fetch_channel(access_token: str) -> dict[str, Any]:
 async def save_channel(db: AsyncSession, user_id, workspace_id, profile: dict[str, Any], token: dict[str, Any]) -> YouTubeChannel:
     existing=await db.scalar(select(YouTubeChannel).where(YouTubeChannel.channel_id==profile["id"]))
     expiry=token.get("expires_in")
-    expires_at=datetime.now(timezone.utc)+__import__("datetime").timedelta(seconds=int(expiry)) if expiry else None
+    expires_at=datetime.now(timezone.utc)+timedelta(seconds=int(expiry)) if expiry else None
     if existing:
         existing.workspace_id=workspace_id
         existing.connected_by=user_id
