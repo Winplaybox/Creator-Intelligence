@@ -7,8 +7,13 @@ from app.auth import current_user
 from app.config import settings
 from app.models import User
 import httpx
+from app.trend_scoring import rank_video_signals
 
 router = APIRouter(prefix="/v1/intelligence", tags=["intelligence"])
+
+class TrendScoreRequest(BaseModel):
+    videos: list[dict[str, Any]] = Field(min_length=1, max_length=50)
+
 
 class SEOAuditInput(BaseModel):
     title: str = Field(max_length=120)
@@ -51,3 +56,8 @@ async def trending(region: str = Query("IN", min_length=2, max_length=2), catego
         comments=int(stats.get("commentCount",0))
         items.append({"video_id":item.get("id"),"title":sn.get("title"),"channel":sn.get("channelTitle"),"published_at":sn.get("publishedAt"),"views":views,"likes":likes,"comments":comments,"engagement_rate":round((likes+comments)/views*100,3) if views else 0,"thumbnail":sn.get("thumbnails",{}).get("high",{}).get("url")})
     return {"region":region.upper(),"category_id":category_id,"fetched_at":datetime.now(timezone.utc).isoformat(),"items":items,"note":"Trending list is a provider snapshot; it is not personalized and may change."}
+
+
+@router.post("/trend-score")
+async def trend_score(body: TrendScoreRequest, user: User = Depends(current_user)):
+    return {"ranked_videos": rank_video_signals(body.videos), "note": "Heuristic signals only; not a prediction of virality."}
