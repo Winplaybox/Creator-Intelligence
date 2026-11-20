@@ -14,9 +14,9 @@ class AIRequest(BaseModel):
  mode:str=Field(default="ideas",max_length=40)
 @router.get("/youtube-search")
 async def youtube_search(q:str=Query(min_length=2,max_length=120),limit:int=Query(10,ge=1,le=25),user:User=Depends(current_user)):
- if not settings.google_client_id: raise HTTPException(503,"YouTube search API key is not configured")
+ if not settings.youtube_api_key: raise HTTPException(503,"YouTube search API key is not configured")
  async with httpx.AsyncClient(timeout=20) as client:
-  r=await client.get("https://www.googleapis.com/youtube/v3/search",params={"part":"snippet","q":q,"type":"video","maxResults":limit,"key":settings.google_client_id})
+  r=await client.get("https://www.googleapis.com/youtube/v3/search",params={"part":"snippet","q":q,"type":"video","maxResults":limit,"key":settings.youtube_api_key})
  if r.status_code>=400: raise HTTPException(502,"YouTube research provider error")
  return {"query":q,"items":[{"video_id":i.get("id",{}).get("videoId"),"title":i.get("snippet",{}).get("title"),"channel":i.get("snippet",{}).get("channelTitle"),"published_at":i.get("snippet",{}).get("publishedAt"),"description":i.get("snippet",{}).get("description"),"thumbnail":i.get("snippet",{}).get("thumbnails",{}).get("medium",{}).get("url")} for i in r.json().get("items",[])]}
 @router.post("/ai")
