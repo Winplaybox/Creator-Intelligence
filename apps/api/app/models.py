@@ -1,10 +1,11 @@
 import uuid
 from datetime import datetime,timezone
-from sqlalchemy import String,DateTime,Boolean,ForeignKey,UniqueConstraint,Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import String,DateTime,Boolean,ForeignKey,UniqueConstraint,Index,Text
+from sqlalchemy.dialects.postgresql import UUID,JSONB
 from sqlalchemy.orm import Mapped,mapped_column,relationship
 from app.db import Base
-def now_utc(): return datetime.now(timezone.utc)
+def now_utc():
+ return datetime.now(timezone.utc)
 class User(Base):
  __tablename__="users"
  id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
@@ -29,8 +30,7 @@ class Membership(Base):
  user_id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("users.id",ondelete="CASCADE"),nullable=False,index=True)
  workspace_id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("workspaces.id",ondelete="CASCADE"),nullable=False,index=True)
  role:Mapped[str]=mapped_column(String(24),default="owner",nullable=False)
- user:Mapped[User]=relationship(back_populates="memberships"
- )
+ user:Mapped[User]=relationship(back_populates="memberships")
  workspace:Mapped[Workspace]=relationship(back_populates="memberships")
 class RefreshSession(Base):
  __tablename__="refresh_sessions"
@@ -41,3 +41,18 @@ class RefreshSession(Base):
  expires_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False)
  revoked_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
  created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
+class YouTubeChannel(Base):
+ __tablename__="youtube_channels"
+ id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
+ workspace_id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("workspaces.id",ondelete="CASCADE"),nullable=False,index=True)
+ connected_by:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("users.id",ondelete="CASCADE"),nullable=False)
+ channel_id:Mapped[str]=mapped_column(String(64),unique=True,nullable=False)
+ title:Mapped[str]=mapped_column(String(255),nullable=False)
+ description:Mapped[str]=mapped_column(Text,default="",nullable=False)
+ thumbnail_url:Mapped[str|None]=mapped_column(Text)
+ access_token_encrypted:Mapped[str]=mapped_column(Text,nullable=False)
+ refresh_token_encrypted:Mapped[str|None]=mapped_column(Text)
+ token_expires_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
+ scopes:Mapped[list]=mapped_column(JSONB,default=list,nullable=False)
+ created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
+ updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
