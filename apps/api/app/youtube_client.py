@@ -1,21 +1,38 @@
-"""Quota-aware YouTube Data API v3 client."""
+"""Quota-aware YouTube Data API v3 client with token refresh."""
 from __future__ import annotations
+from datetime import datetime,timezone,timedelta
 from typing import Any
 import httpx
-from app.services.youtube import decrypt_token
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.youtube import decrypt_token,encrypt_token
 from app.services.youtube_quota import YouTubeQuota,YouTubeQuotaExceeded
+from app.config import settings
 from app.models import YouTubeChannel
 class YouTubeProviderError(RuntimeError): pass
 class YouTubeClient:
- def __init__(self,channel:YouTubeChannel,quota:YouTubeQuota|None=None):
-  self.channel=channel
-  self.quota=quota or YouTubeQuota()
+ def __init__(self,channel:YouTubeChannel,db:AsyncSession,quota:YouTubeQuota|None=None):
+  self.channel=channel; self.db=db; self.quota=quota or YouTubeQuota()
+ async def access_token(self)->str:
+  now=datetime.now(timezone.utc)
+  if self.channel.token_expires_at and self.channel.token_expires_at>now+timedelta(seconds=60):
+   return decrypt_token(self.channel.access_token_encrypted)
+  if not self.channel.refresh_token_encrypted: raise YouTubeProviderError("Channel requires reauthorization")
+  refresh=decrypt_token(self.channel.refresh_token_encrypted)
+  async with httpx.AsyncClient(timeout=20) as client:
+   response=await client.post("https://oauth2.googleapis.com/token",data={"client_id":settings.google_client_id,"client_secret":settings.google_client_secret,"refresh_token":refresh,"grant_type":"refresh_token"})
+  if response.status_code>=400: raise YouTubeProviderError("Token refresh failed; reconnect channel")
+  data=response.json()
+  self.channel.access_token_encrypted=encrypt_token(data["access_token"])
+  self.channel.token_expires_at=now+timedelta(seconds=int(data.get("expires_in",3600)))
+  self.channel.updated_at=now
+  await self.db.commit()
+  return data["access_token"]
  async def request(self,endpoint:str,params:dict[str,Any],quota_units:int=1)->dict[str,Any]:
   await self.quota.reserve(quota_units)
-  token=decrypt_token(self.channel.access_token_encrypted)
+  token=await self.access_token()
   async with httpx.AsyncClient(timeout=20) as client:
    response=await client.get(f"https://www.googleapis.com/youtube/v3/{endpoint}",params=params,headers={"Authorization":f"Bearer {token}"})
-  if response.status_code==401: raise YouTubeProviderError("YouTube access token expired; refresh required")
+  if response.status_code==401: raise YouTubeProviderError("YouTube authorization rejected; reconnect channel")
   if response.status_code==403:
    body=response.json().get("error",{}).get("errors",[])
    reason=body[0].get("reason") if body else None
