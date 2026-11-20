@@ -1,6 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+from app.db import engine
+from sqlalchemy import text
+from redis.asyncio import Redis
 from app.auth import router as auth_router
 from app.youtube_routes import router as youtube_router
 from app.analytics_routes import router as analytics_router
@@ -32,4 +35,22 @@ app.include_router(monetization_router)
 @app.get("/health",tags=["health"])
 async def health(): return {"status":"ok","service":"api","version":"0.5.0"}
 @app.get("/ready",tags=["health"])
-async def ready(): return {"status":"ready","checks":{"database":"not_yet_verified","redis":"not_yet_verified"}}
+async def ready(response: Response):
+    checks = {"database": "unavailable", "redis": "unavailable"}
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception:
+        checks["database"] = "error"
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        await redis.ping()
+        checks["redis"] = "ok"
+    except Exception:
+        checks["redis"] = "error"
+    finally:
+        await redis.aclose()
+    healthy = all(value == "ok" for value in checks.values())
+    response.status_code = 200 if healthy else 503
+    return {"status": "ready" if healthy else "not_ready", "checks": checks}
