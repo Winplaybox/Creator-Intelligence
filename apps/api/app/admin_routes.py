@@ -9,7 +9,8 @@ from app.models import CreatorRecord,Membership,User
 router=APIRouter(prefix="/v1/admin",tags=["admin"])
 async def guard(user):
  allowed={e.strip().lower() for e in settings.admin_emails.split(",") if e.strip()}
- if user.email.lower() not in allowed:raise HTTPException(403,"Platform administrator access required")
+ # Email must be verified (e.g. via Google); otherwise anyone could register the admin's address.
+ if not user.email_verified or user.email.lower() not in allowed:raise HTTPException(403,"Platform administrator access required")
 @router.get("/overview")
 async def overview(db:AsyncSession=Depends(get_db),user:User=Depends(current_user)):
  await guard(user);rows=await db.execute(select(CreatorRecord.module,CreatorRecord.status,func.count()).group_by(CreatorRecord.module,CreatorRecord.status))

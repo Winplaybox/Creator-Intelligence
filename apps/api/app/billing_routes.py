@@ -1,4 +1,4 @@
-"""Plan catalog and workspace usage ledger foundation (Wave 17). No payment processing."""
+"""Plan catalog, workspace credit balance and metered usage. Payments live in billing_dodo.py."""
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -9,14 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import current_user
 from app.db import get_db
-from app.models import CreatorRecord, Membership, User
+from app.config import settings
+from app.models import CreatorRecord, Membership, User, WorkspaceSubscription
+from app.services import credits
 
 router = APIRouter(prefix="/v1/billing", tags=["billing-usage"])
-PLANS = {
-    "free": {"monthly_credits": 100, "max_channels": 1, "features": ["basic_research", "trend_scoring"]},
-    "creator": {"monthly_credits": 2000, "max_channels": 3, "features": ["research", "analytics", "thumbnail_experiments"]},
-    "pro": {"monthly_credits": 10000, "max_channels": 10, "features": ["advanced_analytics", "workflows", "priority_queue"]},
-}
+PLANS = credits.PLANS
 
 
 class UsageRequest(BaseModel):
@@ -41,29 +39,28 @@ async def membership(db: AsyncSession, user: User, workspace_id: UUID) -> Member
 
 @router.get("/plans")
 async def list_plans():
-    return {"plans": [{"name": name, **data} for name, data in PLANS.items()],
-            "note": "Catalog placeholders; not purchasable until payment and entitlement enforcement are implemented."}
+    return {"plans": [{"name": name, **data, "purchasable": name == "free" or credits.product_id(name, "monthly") != ""}
+                      for name, data in PLANS.items()]}
 
 
 @router.post("/usage", status_code=201)
 async def record_usage(body: UsageRequest, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)):
-    member = await membership(db, user, body.workspace_id)
-    if member.role.lower() not in {"owner", "admin"}:
-        raise HTTPException(403, "Workspace owner or admin required to record usage")
-    existing = await db.scalar(select(CreatorRecord).where(
-        CreatorRecord.workspace_id == body.workspace_id, CreatorRecord.module == "usage_ledger",
-        CreatorRecord.payload["idempotency_key"].as_string() == body.idempotency_key
-    ))
-    if existing:
-        return {"id": str(existing.id), "duplicate": True, "entry": existing.payload}
+    """Debits credits for a metered action, exactly once per idempotency key. 402 when the balance is too low."""
+    await membership(db, user, body.workspace_id)
+    sub = await db.get(WorkspaceSubscription, body.workspace_id)
+    await credits.grant_free_monthly(db, body.workspace_id, sub.plan if sub and sub.status == "active" else "free")
+    result = await credits.debit(db, body.workspace_id, body.units, f"usage:{body.idempotency_key}",
+                                 f"{body.action.strip()}"[:240], user.id)
+    if not result["ok"]:
+        await db.rollback()
+        raise HTTPException(402, {"error": "Insufficient credits", "balance": result["balance"], "required": body.units})
     payload = {"action": body.action.strip(), "units": body.units, "idempotency_key": body.idempotency_key,
         "metadata": body.metadata, "recorded_at": datetime.now(timezone.utc).isoformat(), "actor_user_id": str(user.id)}
-    record = CreatorRecord(workspace_id=body.workspace_id, created_by=user.id, module="usage_ledger",
-        title=f"Usage: {body.action.strip()}", payload=payload, status="recorded")
-    db.add(record)
+    if not result["duplicate"]:
+        db.add(CreatorRecord(workspace_id=body.workspace_id, created_by=user.id, module="usage_ledger",
+            title=f"Usage: {body.action.strip()}", payload=payload, status="recorded"))
     await db.commit()
-    await db.refresh(record)
-    return {"id": str(record.id), "duplicate": False, "entry": payload}
+    return {"duplicate": result["duplicate"], "balance": result["balance"], "entry": payload}
 
 
 @router.get("/usage")
@@ -83,27 +80,31 @@ async def usage_summary(workspace_id: UUID, action: str | None = Query(default=N
 @router.get("/workspace-plan")
 async def workspace_plan(workspace_id: UUID, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)):
     await membership(db, user, workspace_id)
-    record = await db.scalar(select(CreatorRecord).where(
-        CreatorRecord.workspace_id == workspace_id, CreatorRecord.module == "workspace_plan"
-    ).order_by(desc(CreatorRecord.created_at)).limit(1))
-    if record is None:
-        return {"workspace_id": str(workspace_id), "plan": "free", "catalog": PLANS["free"], "configured": False}
-    plan = record.payload.get("plan", "free")
-    return {"workspace_id": str(workspace_id), "plan": plan, "catalog": PLANS.get(plan), "configured": True}
+    sub = await db.get(WorkspaceSubscription, workspace_id)
+    plan = sub.plan if sub and sub.status == "active" else "free"
+    await credits.grant_free_monthly(db, workspace_id, plan)
+    await db.commit()
+    return {"workspace_id": str(workspace_id), "plan": plan, "status": sub.status if sub else "active",
+            "renews_at": sub.current_period_end.isoformat() if sub and sub.current_period_end else None,
+            "catalog": PLANS.get(plan), "credits": await credits.balance(db, workspace_id), "configured": sub is not None}
 
 
 @router.put("/workspace-plan")
 async def set_workspace_plan(body: PlanRequest, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)):
-    member = await membership(db, user, body.workspace_id)
-    if member.role.lower() != "owner":
-        raise HTTPException(403, "Workspace owner required")
+    """Platform-admin override only (comped accounts, support). Customers change plans through checkout."""
+    allowed = {e.strip().lower() for e in settings.admin_emails.split(",") if e.strip()}
+    if not user.email_verified or user.email.lower() not in allowed:
+        raise HTTPException(403, "Plans are changed through checkout")
     plan = body.plan.strip().lower()
     if plan not in PLANS:
         raise HTTPException(422, "Unknown plan")
-    record = CreatorRecord(workspace_id=body.workspace_id, created_by=user.id, module="workspace_plan",
-        title=f"Plan set: {plan}", payload={"plan": plan, "changed_at": datetime.now(timezone.utc).isoformat(),
-        "actor_user_id": str(user.id), "source": "manual_admin"}, status="configured")
-    db.add(record)
+    sub = await db.get(WorkspaceSubscription, body.workspace_id, with_for_update=True)
+    if sub is None:
+        sub = WorkspaceSubscription(workspace_id=body.workspace_id)
+        db.add(sub)
+    sub.plan, sub.status, sub.updated_at = plan, "active", datetime.now(timezone.utc)
+    db.add(CreatorRecord(workspace_id=body.workspace_id, created_by=user.id, module="workspace_plan", title=f"Plan set: {plan}",
+        payload={"plan": plan, "changed_at": datetime.now(timezone.utc).isoformat(), "actor_user_id": str(user.id),
+                 "source": "platform_admin"}, status="configured"))
     await db.commit()
-    return {"workspace_id": str(body.workspace_id), "plan": plan, "configured": True,
-            "note": "Manual plan configuration only; no payment, subscription renewal, or feature gating is wired."}
+    return {"workspace_id": str(body.workspace_id), "plan": plan, "configured": True}

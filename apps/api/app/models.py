@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime,timezone
-from sqlalchemy import String,DateTime,Boolean,ForeignKey,UniqueConstraint,Index,Text
+from sqlalchemy import String,DateTime,Boolean,ForeignKey,UniqueConstraint,Index,Text,Integer,BigInteger
 from sqlalchemy.dialects.postgresql import UUID,JSONB
 from sqlalchemy.orm import Mapped,mapped_column,relationship
 from app.db import Base
@@ -10,6 +10,8 @@ class User(Base):
  __tablename__="users"
  id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
  email:Mapped[str]=mapped_column(String(320),unique=True,index=True,nullable=False)
+ username:Mapped[str|None]=mapped_column(String(32),unique=True,index=True)
+ google_sub:Mapped[str|None]=mapped_column(String(64),unique=True)
  password_hash:Mapped[str|None]=mapped_column(String(255))
  display_name:Mapped[str]=mapped_column(String(120),default="")
  email_verified:Mapped[bool]=mapped_column(Boolean,default=False,nullable=False)
@@ -69,3 +71,48 @@ class CreatorRecord(Base):
  due_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
  created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
  updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
+
+
+class WorkspaceSubscription(Base):
+ """Paid plan of a workspace. Written only by verified payment webhooks (or audited platform admins)."""
+ __tablename__="workspace_subscriptions"
+ workspace_id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("workspaces.id",ondelete="CASCADE"),primary_key=True)
+ plan:Mapped[str]=mapped_column(String(32),nullable=False,default="free")
+ status:Mapped[str]=mapped_column(String(24),nullable=False,default="active")
+ provider_subscription_id:Mapped[str|None]=mapped_column(String(64),unique=True)
+ provider_customer_id:Mapped[str|None]=mapped_column(String(64))
+ current_period_end:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
+ updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
+
+class BillingPayment(Base):
+ """One row per provider payment; the primary key makes every grant exactly-once."""
+ __tablename__="billing_payments"
+ payment_id:Mapped[str]=mapped_column(String(64),primary_key=True)
+ workspace_id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("workspaces.id",ondelete="CASCADE"),nullable=False,index=True)
+ plan:Mapped[str]=mapped_column(String(32),nullable=False)
+ credits:Mapped[int]=mapped_column(Integer,nullable=False,default=0)
+ amount_minor:Mapped[int|None]=mapped_column(BigInteger)
+ currency:Mapped[str|None]=mapped_column(String(3))
+ provider_subscription_id:Mapped[str|None]=mapped_column(String(64),index=True)
+ status:Mapped[str]=mapped_column(String(24),nullable=False,default="granted")
+ created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
+
+class BillingWebhookEvent(Base):
+ __tablename__="billing_webhook_events"
+ webhook_id:Mapped[str]=mapped_column(String(128),primary_key=True)
+ event_type:Mapped[str]=mapped_column(String(64),nullable=False)
+ received_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)
+ result:Mapped[str|None]=mapped_column(String(500))
+
+class CreditLedgerEntry(Base):
+ """Append-only workspace credit ledger; balance = SUM(amount). (workspace, kind, reference) is unique."""
+ __tablename__="credit_ledger"
+ __table_args__=(UniqueConstraint("workspace_id","kind","reference",name="uq_credit_ledger_once"),Index("ix_credit_ledger_ws_created","workspace_id","created_at"))
+ id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
+ workspace_id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),ForeignKey("workspaces.id",ondelete="CASCADE"),nullable=False)
+ amount:Mapped[int]=mapped_column(Integer,nullable=False)
+ kind:Mapped[str]=mapped_column(String(40),nullable=False)
+ reference:Mapped[str]=mapped_column(String(160),nullable=False)
+ description:Mapped[str]=mapped_column(String(240),default="",nullable=False)
+ actor_user_id:Mapped[uuid.UUID|None]=mapped_column(UUID(as_uuid=True))
+ created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc,nullable=False)

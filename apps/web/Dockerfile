@@ -6,13 +6,17 @@ COPY apps/web/package.json ./apps/web/package.json
 RUN pnpm install --no-frozen-lockfile
 FROM node:22-alpine AS build
 WORKDIR /app
+ARG NEXT_PUBLIC_API_URL=https://creator-api.winplaybox.in
+ARG NEXT_PUBLIC_SITE_URL=https://creator.winplaybox.in
+ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID=
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID NEXT_TELEMETRY_DISABLED=1
 RUN corepack enable
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN pnpm --filter web build
 FROM node:22-alpine AS runtime
 WORKDIR /app
-ENV NODE_ENV=production
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
 RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
 COPY --from=build /app/apps/web/.next/standalone ./
 COPY --from=build /app/apps/web/.next/static ./apps/web/.next/static

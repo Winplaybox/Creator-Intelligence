@@ -20,15 +20,23 @@ from app.thumbnail_experiment_routes import router as thumbnail_experiment_route
 from app.monetization_routes import router as monetization_router
 from app.revenue_routes import router as revenue_router
 from app.billing_routes import router as billing_router
+from app.billing_dodo import router as billing_dodo_router
 from app.notification_routes import router as notification_router
 from app.rbac_routes import router as rbac_router
 from app.social_oauth_routes import router as social_oauth_router
 from app.admin_routes import router as admin_router
 from app.middleware import RequestObservabilityMiddleware
-app=FastAPI(title=settings.app_name,version="0.6.0",docs_url="/docs" if settings.app_env!="production" else None,redoc_url=None)
+from contextlib import asynccontextmanager
+from app.config import production_problems
+@asynccontextmanager
+async def lifespan(_app):
+ problems=production_problems(settings)
+ if problems:raise RuntimeError("Refusing to start in production; fix: "+", ".join(problems))
+ yield
+app=FastAPI(title=settings.app_name,version="0.7.0",docs_url="/docs" if not settings.is_production else None,redoc_url=None,openapi_url="/openapi.json" if not settings.is_production else None,lifespan=lifespan)
 app.add_middleware(RequestObservabilityMiddleware)
 app.add_middleware(CORSMiddleware,allow_origins=settings.allowed_origins,allow_credentials=True,allow_methods=["GET","POST","PUT","PATCH","DELETE"],allow_headers=["Authorization","Content-Type","X-Request-ID"])
-for r in [auth_router,youtube_router,analytics_router,creator_features_router,research_router,intelligence_router,workflow_router,competitor_momentum_router,calendar_router,trend_history_router,publishing_queue_router,thumbnail_experiment_router,monetization_router,revenue_router,billing_router,notification_router,rbac_router,social_oauth_router,admin_router]:app.include_router(r)
+for r in [auth_router,youtube_router,analytics_router,creator_features_router,research_router,intelligence_router,workflow_router,competitor_momentum_router,calendar_router,trend_history_router,publishing_queue_router,thumbnail_experiment_router,monetization_router,revenue_router,billing_router,billing_dodo_router,notification_router,rbac_router,social_oauth_router,admin_router]:app.include_router(r)
 @app.get("/health",tags=["health"])
 async def health():return {"status":"ok","service":"api","version":"0.6.0"}
 @app.get("/ready",tags=["health"])
