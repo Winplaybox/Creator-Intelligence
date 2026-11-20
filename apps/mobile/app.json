@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Creator Intelligence",
+    "slug": "creator-intelligence",
+    "scheme": "creatorintelligence",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": { "supportsTablet": true },
+    "android": { "package": "in.winplaybox.creatorintelligence" }
+  }
+}
