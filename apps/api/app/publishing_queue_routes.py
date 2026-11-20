@@ -25,6 +25,7 @@ class QueueCreateRequest(BaseModel):
     scheduled_at: datetime | None = None
     content: dict = Field(default_factory=dict)
     metadata: dict = Field(default_factory=dict)
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
 
 
 class QueueResultRequest(BaseModel):
@@ -60,8 +61,17 @@ async def enqueue(
     scheduled = body.scheduled_at
     if scheduled and scheduled.tzinfo is None:
         raise HTTPException(422, "scheduled_at must include timezone")
+    if body.idempotency_key:
+        existing = await db.scalar(select(CreatorRecord).where(
+            CreatorRecord.workspace_id == body.workspace_id,
+            CreatorRecord.module == "publishing_queue",
+            CreatorRecord.payload["idempotency_key"].as_string() == body.idempotency_key,
+        ))
+        if existing:
+            return {"id": str(existing.id), "status": existing.status, "scheduled_at": existing.due_at.isoformat() if existing.due_at else None, "duplicate": True}
     payload = {
         "platform": platform,
+        "idempotency_key": body.idempotency_key,
         "content": body.content,
         "metadata": body.metadata,
         "attempts": 0,
