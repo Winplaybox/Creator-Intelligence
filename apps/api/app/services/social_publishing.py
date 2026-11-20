@@ -21,12 +21,12 @@ class PublishResult:
 
 
 def classify_container_status(status_code: str | None) -> str:
-    code = (status_code or \"\").strip().upper()
-    if code == \"FINISHED\":
-        return \"ready\"
-    if code in {\"ERROR\", \"EXPIRED\"}:
-        return \"failed\"
-    return \"pending\"
+    code = (status_code or "").strip().upper()
+    if code == "FINISHED":
+        return "ready"
+    if code in {"ERROR", "EXPIRED"}:
+        return "failed"
+    return "pending"
 
 
 class MetaPublisher:
