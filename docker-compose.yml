@@ -39,6 +39,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://creator:creator_dev_password@postgres:5432/creator_intelligence
       REDIS_URL: redis://redis:6379/0
       PUBLISHING_WORKER_ENABLED: ${PUBLISHING_WORKER_ENABLED:-false}
+      YOUTUBE_PUBLISHING_WORKER_ENABLED: ${YOUTUBE_PUBLISHING_WORKER_ENABLED:-false}
+      YOUTUBE_UPLOAD_ROOT: ${YOUTUBE_UPLOAD_ROOT:-/uploads}
+    volumes:
+      - youtube_uploads:/uploads
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
@@ -52,3 +56,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  youtube_uploads:
